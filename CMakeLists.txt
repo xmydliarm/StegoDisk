@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.8)
+cmake_policy(SET CMP0054 NEW)
 include(GenerateExportHeader)
-
 
 option(VERSION_NAMES "Append version into binary/library name" OFF)
 option(WITH_FUSE "Build this library with FUSE" OFF)
@@ -100,9 +100,20 @@ set(CMAKE_C_VISIBILITY_PRESET hidden) #PSTODO do not work fot libjpeg
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
+##### CUSTOM ADDITION PERTURBED ########
+
+#set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ljpeg")
+
+add_executable(StegoDisk ./main.cc)
+
+target_link_libraries(StegoDisk jpeg)
+
+##########################################
+
 if(NOT MSVC)
-  set(warnings "-Wall -Wextra -pedantic -Werror")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -pthread ${warnings}")
+  #set(warnings "-Wall -Wextra -pedantic -Werror")
+  set(warnings "-Wextra -Werror -pedantic")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -pthread ${warnings}")
   if(OPTIMIZE_FOR_NATIVE)
       include(CheckCXXCompilerFlag)
       CHECK_CXX_COMPILER_FLAG("-march=native" COMPILER_SUPPORTS_MARCH_NATIVE)
@@ -119,8 +130,8 @@ endif()
 ################ CXX FLAGS ##################
 
 ################ LIBJPEGTURBO ##################
-option(ENABLE_SHARED OFF)
-option(WITH_TURBOJPEG OFF)
+option(ENABLE_SHARED ON)
+option(WITH_TURBOJPEG ON)
 option(WITH_SIMD OFF)
 set(CMAKE_INSTALL_PREFIX ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
 add_subdirectory(lib/libjpeg-turbo)
@@ -350,7 +361,9 @@ set(STEGODISK_SRCS
 
 if(FUSE_FOUND)
   set(STEGODISK_HDRS ${STEGODISK_HDRS} ${FUSE_HDRS})
-  set(STEGODISK_SRCS ${STEGODISK_SRCS} ${FUSE_SRCS})
+  set(STEGODISK_SRCS ${STEGODISK_SRCS} ${FUSE_SRCS}
+          ./main.cc
+  )
 endif()
 
 ##############################################################################################################################
@@ -379,7 +392,9 @@ else()
   set(STEGODISK_LIBRARY ${OBFUSCATE_LIBRARY})
 endif()
 
-add_library(${STEGODISK_LIBRARY} ${STEGODISK_SRCS} ${STEGODISK_HDRS} ${LODEPNG_SRC})
+add_library(${STEGODISK_LIBRARY} ${STEGODISK_SRCS} ${STEGODISK_HDRS} ${LODEPNG_SRC}
+        ./main.cc
+)
 
 target_link_libraries(${STEGODISK_LIBRARY} ${THIRD_LIBRARIES})
 
@@ -417,3 +432,7 @@ endif()
 if(BUILD_TESTS)
   add_subdirectory(src/tests)
 endif()
+
+
+
+
