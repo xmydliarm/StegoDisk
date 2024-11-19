@@ -641,36 +641,15 @@ void printMatrix(const vector<vector<int>>& Q) {
     }
 }
 
-int gcd(int a, int b) {
-    // Function to calculate the greatest common divisor (GCD) using the Euclidean algorithm
-    while (b != 0) {
-        int temp = b;
-        b = a % b;
-        a = temp;
-    }
-    return a;
-}
-
-void DC_pairs(vector<vector<vector<int>>>& E) {
-    int MaxQ = 121; // Maximal quantization step
-
-    // Initialize the E vector to zero
-    for (int i = 0; i < MaxQ; i++) {
-        for (int j = 0; j < MaxQ; j++) {
-            for (int k = 0; k < 3; k++) {
-                E[i][j][k] = 0; // Accessing the vector through the shared pointer
-            }
-        }
-    }
+void DC_pairs(vector<vector<int>>& E) {
+    const int MaxQ = 121; // Maximal quantization step
 
     // Calculate contributing pairs of quantization steps
-    for (int i = 2; i < MaxQ; i++) { // Start from 2 for i
-        for (int j = i + 1; j < MaxQ; j++) { // j starts from i + 1
-            int g = gcd(i, j); // Greatest common divisor
-            if ((j / g) % 2 == 0) { // Check if j is even
-                E[i - 1][j - 1][0] = 1; // E(i,j,1), shifted
-                E[i - 1][j - 1][1] = j / (2 * g); // E(i,j,2), shifted
-                E[i - 1][j - 1][2] = j / g; // E(i,j,3), shifted
+    for (int i = 2; i < MaxQ; i++) {
+        for (int j = i + 1; j < MaxQ; j++) {
+            int g = gcd(i, j);
+            if ((j / g) % 2 == 0) {
+                E[i - 1][j - 1] = j / g;
             }
         }
     }
@@ -873,7 +852,7 @@ int count_nonzeros(const vector<vector<vector<int>>>& matrix, const int start, c
 
 // Function to calculate capacity and number of non-zero coefficients
 void DC_capacity_indiv(const vector<vector<int>>& Qm1, const vector<vector<int>>& Qm2,
-                       const vector<vector<vector<int>>>& D, const vector<vector<vector<int>>>& E,
+                       const vector<vector<vector<int>>>& D, const vector<vector<int>>& E,
                        size_t& Cap, int& N0) {
     Cap = 0;
 
@@ -884,11 +863,10 @@ void DC_capacity_indiv(const vector<vector<int>>& Qm1, const vector<vector<int>>
             int q2 = Qm2[j][i];  // Second quantization step
 
             // If q1, q2 is a contributing pair
-            if (E[q1-1][q2-1][0] != 0) {
-
+            if (E[q1-1][q2-1] != 0 && E[q1-1][q2-1] % 2 == 0) {
                 // Calculate capacity by determining whether the koeficient is multiple of quantization step
-                size_t start = E[q1-1][q2-1][2] * 0.5;
-                size_t step = E[q1-1][q2-1][2];   // Step size
+                size_t start = E[q1-1][q2-1] * 0.5;
+                size_t step = E[q1-1][q2-1];   // Step size
 
                 int mode_index = i * 8 + j;  // Calculate mode index within 8x8 matrix
                 // Iterate over all blocks in D for the current mode
@@ -1060,7 +1038,7 @@ int sign(const int val) {
 }
 
 vector<vector<vector<double>>> embedMessage(const vector<vector<int>>& Qm1, const vector<vector<int>>& Qm2,
-                  const vector<vector<vector<int>>>& E, const vector<vector<vector<int>>>& D1,
+                  const vector<vector<int>>& E, const vector<vector<vector<int>>>& D1,
                   const vector<double>& Diff_vector, const vector<int>& Message,
                   const vector<vector<vector<double>>>& D2raw,
                   const string& nonzero_spec, const int MB, const int NB) {
@@ -1086,10 +1064,10 @@ vector<vector<vector<double>>> embedMessage(const vector<vector<int>>& Qm1, cons
         int q1 = Qm1[jj][ii];  // First quantization step
         int q2 = Qm2[jj][ii];  // Second quantization step
 
-        if (E[q1 - 1][q2 - 1][0] != 0) { // Check if q1, q2 is a contributing pair
+        if (E[q1-1][q2-1] != 0 && E[q1-1][q2-1] % 2 == 0) {
             for (int i = 0; i < MB; ++i) {
                 for (int j = 0; j < NB; ++j) {
-                    if ((D1[i][j][k] - E[q1 - 1][q2 - 1][1]) % E[q1 - 1][q2 - 1][2] == 0) {
+                    if (static_cast<int>((D1[i][j][k] - E[q1 - 1][q2 - 1] * 0.5)) % E[q1 - 1][q2 - 1] == 0) {
                         // D1[i][j][k] is the contributing multiple
                         d++;
                         if (Diff_vector[d] == 1) {
@@ -1259,7 +1237,7 @@ int main() {
     printMatrix(Qm2);*/
 
     // Create a 3D vector with dimensions [121][121][3]
-    auto E = vector(121, vector(121, vector<int>(3)));
+    auto E = vector(121, vector<int>(121));
 
     // Call the DC_pairs function
     DC_pairs(E);
@@ -1367,11 +1345,13 @@ int main() {
             int q1 = Qm1[k % 8][k / 8];  // q1 = first quantization step
             int q2 = Qm2[k % 8][k / 8];  // q2 = second quantization step
 
-            if (E[q1-1][q2-1][0] != 0) {  // If q1, q2 is a contributing pair
+            //if (E[q1-1][q2-1][0] != 0) {  // If q1, q2 is a contributing pair
+            if (E[q1-1][q2-1] != 0 && E[q1-1][q2-1] % 2 == 0) {
                 // Loop over all blocks
                 for (int i = 0; i < MB; ++i) {
                     for (int j = 0; j < NB; ++j) {
-                        if (std::fmod(D1[i][j][k] - E[q1-1][q2-1][1], E[q1-1][q2-1][2]) == 0) {
+                        //if (std::fmod(D1[i][j][k] - E[q1-1][q2-1][1], E[q1-1][q2-1][2]) == 0) {
+                        if (std::fmod(D1[i][j][k] - E[q1-1][q2-1] * 0.5, E[q1-1][q2-1]) == 0) {
                             // D1(i,j,k) is the contributing multiple
                             c++;  // Update message bit counter
 
@@ -1423,9 +1403,9 @@ int main() {
                     int q2 = Qm2[jj][ii];  // Second quantization step
 
                     // Check if q1, q2 is a contributing pair
-                    if (E[q1 - 1][q2 - 1][0] != 0) {
+                    if (E[q1-1][q2-1] != 0 && E[q1-1][q2-1] % 2 == 0) {
                         // Check for contributing multiple
-                        if ((D1[i][j][k] - E[q1 - 1][q2 - 1][1]) % E[q1 - 1][q2 - 1][2] == 0) {
+                        if (static_cast<int>(D1[i][j][k] - E[q1 - 1][q2 - 1] * 0.5) % E[q1 - 1][q2 - 1] == 0) {
                             // Increment message bit counter
                             ++c;
 
@@ -1489,9 +1469,9 @@ int main() {
                     int q2 = Qm2[jj][ii];  // Second quantization step
 
                     // Check if q1, q2 is a contributing pair
-                    if (E[q1 - 1][q2 - 1][0] != 0) {
+                    if (E[q1-1][q2-1] != 0 && E[q1-1][q2-1] % 2 == 0) {
                         // Check for contributing multiple
-                        if ((D1[i][j][k] - E[q1 - 1][q2 - 1][1]) % E[q1 - 1][q2 - 1][2] == 0) {
+                        if (static_cast<int>(D1[i][j][k] - E[q1 - 1][q2 - 1] * 0.5) % E[q1 - 1][q2 - 1] == 0) {
                             // Increment message bit counter
                             ++c;
 
@@ -1538,9 +1518,9 @@ int main() {
                         int q2 = Qm2[jj][ii];  // Second quantization step
 
                         // Check if q1, q2 is a contributing pair
-                        if (E[q1 - 1][q2 - 1][0] != 0) {
+                        if (E[q1-1][q2-1] != 0 && E[q1-1][q2-1] % 2 == 0) {
                             // Check for contributing multiple
-                            if ((D1[i][j][k] - E[q1 - 1][q2 - 1][1]) % E[q1 - 1][q2 - 1][2] == 0) {
+                            if (static_cast<int>(D1[i][j][k] - E[q1 - 1][q2 - 1] * 0.5) % E[q1 - 1][q2 - 1] == 0) {
                                 // Increment message bit counter
                                 ++c;
 
