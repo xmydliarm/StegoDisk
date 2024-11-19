@@ -871,100 +871,11 @@ int count_nonzeros(const vector<vector<vector<int>>>& matrix, const int start, c
     return non_zero_count;
 }
 
-// Function to compute the histogram of given values
-vector<int> hist(const vector<int>& data, const int rmin, const int rmax) {
-    vector histogram(rmax - rmin + 1, 0);
-
-    for (const int val : data) {
-        if (val >= rmin && val <= rmax) {
-            histogram[val - rmin]++;
-        }
-    }
-    return histogram;
-}
-
-// Translated DCThistAll function
-void DCThistAll(const vector<vector<vector<int>>>& D, const string& range, const string& sgn, vector<vector<int>>& hpos, vector<vector<int>>& hneg) {
-    vector<int> aux(D.size() * D[0].size(), 0);  // Auxiliary array to hold DCT coefficients for each mode
-    int rmin, rmax;
-
-    // Handle 'Yabs' case: if sgn is 'Yabs', take the absolute value of D
-    vector<vector<vector<int>>> D_abs = D;  // Copy D
-    if (sgn == "Yabs") {
-        for (auto& block : D_abs) {
-            for (auto& row : block) {
-                for (auto& val : row) {
-                    val = abs(val);  // Make absolute
-                }
-            }
-        }
-    }
-
-    // Determine the range of the histogram
-    if (range == "all") {
-        rmin = D_abs[0][0][0];
-        rmax = D_abs[0][0][0];
-        for (const auto& block : D_abs) {
-            for (const auto& row : block) {
-                for (int val : row) {
-                    rmin = min(rmin, val);
-                    rmax = max(rmax, val);
-                }
-            }
-        }
-    } else {
-        // If range is a number, set rmin and rmax directly
-        int r = stoi(range);
-        rmin = -r;
-        rmax = r;
-    }
-
-    // Resize hpos and hneg to hold histograms for each DCT mode (64 modes)
-    hpos.resize(std::abs(rmax) + 1, std::vector<int>(64, 0));
-    hneg.resize(std::abs(rmin) + 1, std::vector<int>(64, 0));
-
-    for (int k = 0; k < 64; ++k) {
-        aux.assign(D.size() * D[0].size(), 0);
-
-        // Flatten D(:,:,k) into aux (column-major order)
-        for (size_t j = 0; j < D[0].size(); ++j) {
-            for (size_t i = 0; i < D.size(); ++i) {
-                aux[j * D.size() + i] = D[i][j][k];
-            }
-        }
-
-        // Compute histogram
-        std::vector<int> haux(rmax - rmin + 1, 0);
-        for (int val : aux) {
-            if (val >= rmin && val <= rmax) {
-                ++haux[val - rmin];
-            }
-        }
-
-        // Fill hpos (positive histogram part)
-        for (int idx = 0; idx < rmax + 1; ++idx) {
-            hpos[idx][k] = haux[abs(rmin) + idx];
-        }
-
-        // Fill hneg (negative histogram part)
-        for (int idx = 0; idx < std::abs(rmin) + 1; ++idx) {
-            hneg[idx][k] = haux[std::abs(rmin) - idx];  // Reverse indexing
-        }
-    }
-}
-
 // Function to calculate capacity and number of non-zero coefficients
 void DC_capacity_indiv(const vector<vector<int>>& Qm1, const vector<vector<int>>& Qm2,
                        const vector<vector<vector<int>>>& D, const vector<vector<vector<int>>>& E,
                        size_t& Cap, int& N0) {
-    // Get the histograms of DCT coefficients
-    vector<vector<int>> hp, hn;
-
-    // Call the DCThistAll function
-    DCThistAll(D, "all", "Nabs", hp, hn);
-    //DCThistAll(D, hp, hn);
-
-    Cap = 0.0;
+    Cap = 0;
 
     // Iterate over the 64 DCT modes (8x8 blocks)
     for (int i = 0; i < 8; ++i) {
@@ -974,26 +885,25 @@ void DC_capacity_indiv(const vector<vector<int>>& Qm1, const vector<vector<int>>
 
             // If q1, q2 is a contributing pair
             if (E[q1-1][q2-1][0] != 0) {
-                //size_t start = E[q1-1][q2-1][1] + 1;   // Start index
-                const size_t start = E[q1-1][q2-1][1];   // Zero based already no need +1
-                const size_t step = E[q1-1][q2-1][2];    // Step size
 
-                // Accessing the histogram mode for k
-                size_t k = i * 8 + j;  // Combine row and column to get the mode
+                // Calculate capacity by determining whether the koeficient is multiple of quantization step
+                size_t start = E[q1-1][q2-1][2] * 0.5;
+                size_t step = E[q1-1][q2-1][2];   // Step size
 
-                // Ensure valid range before summing values from hp and hn
-                // Sum the positive multiples from hp (DCT mode column, column-first traversal)
-                for (size_t idx = start; idx < hp.size(); idx += step) {
-                    if (k < hp[idx].size()) {  // Ensure valid access
-                        Cap += hp[idx][k];  // Add contributions for this mode
-                    }
-                }
+                int mode_index = i * 8 + j;  // Calculate mode index within 8x8 matrix
+                // Iterate over all blocks in D for the current mode
+                for (size_t x = 0; x < D.size(); ++x) {
+                   for (size_t y = 0; y < D[0].size(); ++y) {
+                       int coef = D[x][y][mode_index];  // Get the coefficient for current block and mode
 
-                // Sum the negative multiples from hn (DCT mode column, column-first traversal)
-                for (size_t idx = start; idx < hn.size(); idx += step) {
-                    if (k < hn[idx].size()) {  // Ensure valid access
-                        Cap += hn[idx][k];  // Add contributions for this mode
-                    }
+                       // Check if the coefficient is a multiple of step size
+                       if (coef != 0) {
+                           N0++;  // Count non-zero coefficients
+                           if (abs(coef - static_cast<int>(start)) % step == 0) {
+                               Cap++;  // Increment capacity if coefficient is contributing
+                           }
+                       }
+                   }
                 }
             }
         }
@@ -1001,15 +911,18 @@ void DC_capacity_indiv(const vector<vector<int>>& Qm1, const vector<vector<int>>
 
     // Count the total number of non-zero coefficients in D
     N0 = 0;
-    for (size_t i = 0; i < D.size(); ++i) {
-        for (size_t j = 0; j < D[i].size(); ++j) {
-            for (size_t k = 0; k < D[i][j].size(); ++k) {
-                if (D[i][j][k] != 0) {
+    for (const auto & i : D) {
+        for (const auto & j : i) {
+            for (const int k : j) {
+                if (k != 0) {
                     N0++;
                 }
             }
         }
     }
+
+    cout << "Capacity: " << Cap << endl;
+    cout << "Nonzero coefs of image: " << N0 << endl;
 }
 
 // raw2jpg02raw function for quantized DCT coefficients
@@ -1396,7 +1309,7 @@ int main() {
     auto DCTs_DoubleCompressed = D1_two;
 
     // For storing absolute message length
-    const size_t capacity = 0.1;
+    const double capacity = 0.1;
     size_t AbsoluteMsgLength = 0;
     const string nonzero_spec = "AC-DC";
 
