@@ -14,10 +14,7 @@
 
 using namespace std;
 
-const int Q1 = 85;
-const int Q2 = 70;
-
-#pragma region ICDT/FDCT TRANSFORM
+#pragma region HELPER FUNCTIONS/MACROS
 
 #define DCTSIZE 8
 #define DCTSIZE2 64
@@ -25,6 +22,7 @@ const int Q2 = 70;
 #define PASS1_BITS 2
 #define INT32 long
 #define JSAMPLE unsigned char
+#define DCTELEM	int
 #define ONE ((INT32)1)
 
 #define FIX_0_298631336 ((INT32)2446)
@@ -52,7 +50,273 @@ int range_limit(int x) {
     else return x;
 }
 
-void jpeg_idct_islow (double out[], const double coef_block[], const double qt[])
+// Write 1D vector
+template<typename T>
+void WriteVectorToFile(const std::vector<T>& vec1D, const std::string& filename) {
+    std::ofstream outfile(filename);
+    if (!outfile) {
+        std::cerr << "Error opening file!" << std::endl;
+        return;
+    }
+
+    for (size_t row = 0 ; row < vec1D.size() ; row++) {
+        outfile << vec1D[row] << "\n";
+    }
+
+    outfile.close();
+}
+
+// Write 2D vector
+template<typename T>
+void WriteVectorToFile(const std::vector<std::vector<T>>& vec2D, const std::string& filename) {
+    std::ofstream outfile(filename);
+    if (!outfile) {
+        std::cerr << "Error opening file!" << std::endl;
+        return;
+    }
+
+    for (size_t row = 0 ; row < vec2D.size() ; row++) {
+        for (size_t column = 0 ; column < vec2D[0].size() ; column++) {
+            outfile << vec2D[row][column] << "\n";
+        }
+    }
+
+    outfile.close();
+}
+
+// Write 3D vector
+template<typename T>
+void WriteVectorToFile(const std::vector<std::vector<std::vector<T>>>& vec3D, const std::string& filename) {
+    std::ofstream outfile(filename);
+    if (!outfile) {
+        std::cerr << "Error opening file!" << std::endl;
+        return;
+    }
+
+    for (size_t depth = 0 ; depth < vec3D[0][0].size() ; depth++) {
+        for (size_t row = 0 ; row < vec3D.size() ; row++) {
+            for (size_t column = 0 ; column < vec3D[0].size() ; column++) {
+                outfile << vec3D[row][column][depth] << "\n";
+            }
+        }
+    }
+
+    outfile.close();
+}
+
+void PrintQuantTable(jpeg_decompress_struct* cinfo) {
+    for (int tblno = 0; tblno < NUM_QUANT_TBLS; tblno++) {
+        JQUANT_TBL* qtbl = cinfo->quant_tbl_ptrs[tblno];
+        if (qtbl != nullptr) {
+            printf("Quantization table %d:\n", tblno + 1);
+            for (int i = 0; i < DCTSIZE; i++) {
+                for (int j = 0; j < DCTSIZE; j++) {
+                    printf("%5d ", qtbl->quantval[i * DCTSIZE + j]);
+                }
+                printf("\n");
+            }
+            printf("\n");
+        }
+    }
+}
+
+void PrintMatrix(const vector<vector<int>>& Q) {
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+            cout << Q[i][j] << " "; // Dereference the shared_ptr and access elements
+        }
+        cout << endl;
+    }
+}
+
+int RoundToInt(const double val) {
+    return static_cast<int>(std::round(val));
+}
+
+int Sign(const int val) {
+    return (val > 0) - (val < 0);
+}
+
+#pragma endregion HELPER FUNCTIONS/MACROS
+
+/**
+ * @brief Performs the forward discrete cosine transform (FDCT) on a block of spatial data.
+ *
+ * This function computes the forward discrete cosine transform (FDCT) for an 8x8 block of spatial data using a slow implementation.
+ * It takes the spatial domain values (image block) and applies the DCT, storing the resulting frequency domain coefficients.
+ *
+ * @param[out] out Output array to store the 8x8 DCT coefficients after the transformation.
+ *                 The resulting coefficients are stored in row-major order.
+ * @param[in] in Input array containing the 8x8 spatial block to be transformed.
+ *               These are typically pixel values of a single block from the image.
+ *
+ * @note The input `in` is expected to contain the spatial domain pixel values in a flattened form (64 elements).
+ * @note The function uses a "slow" implementation of DCT, which may be less efficient but provides a simple method for the transformation.
+ */
+void PerformSlowFDCT (double out[], const double in[])
+{
+  INT32 tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7;
+  INT32 tmp10, tmp11, tmp12, tmp13;
+  INT32 z1, z2, z3, z4, z5;
+  DCTELEM *dataptr, *data;
+  int ctr, i;
+
+  /* Pass 1: process rows. */
+  /* Note results are scaled up by sqrt(8) compared to a true DCT; */
+  /* furthermore, we scale the results by 2**PASS1_BITS. */
+	data = (DCTELEM*) malloc (DCTSIZE * DCTSIZE * sizeof (DCTELEM));
+	for (i=0; i<DCTSIZE * DCTSIZE; i++) data[i] = (int)in[i];
+
+  dataptr = data;
+  for (ctr = DCTSIZE-1; ctr >= 0; ctr--) {
+    tmp0 = dataptr[0] + dataptr[7];
+    tmp7 = dataptr[0] - dataptr[7];
+    tmp1 = dataptr[1] + dataptr[6];
+    tmp6 = dataptr[1] - dataptr[6];
+    tmp2 = dataptr[2] + dataptr[5];
+    tmp5 = dataptr[2] - dataptr[5];
+    tmp3 = dataptr[3] + dataptr[4];
+    tmp4 = dataptr[3] - dataptr[4];
+
+    /* Even part per LL&M figure 1 --- note that published figure is faulty;
+     * rotator "sqrt(2)*c1" should be "sqrt(2)*c6".
+     */
+
+    tmp10 = tmp0 + tmp3;
+    tmp13 = tmp0 - tmp3;
+    tmp11 = tmp1 + tmp2;
+    tmp12 = tmp1 - tmp2;
+
+    dataptr[0] = (DCTELEM) ((tmp10 + tmp11) << PASS1_BITS);
+    dataptr[4] = (DCTELEM) ((tmp10 - tmp11) << PASS1_BITS);
+
+    z1 = MULTIPLY(tmp12 + tmp13, FIX_0_541196100);
+    dataptr[2] = (DCTELEM) DESCALE(z1 + MULTIPLY(tmp13, FIX_0_765366865),
+				   CONST_BITS-PASS1_BITS);
+    dataptr[6] = (DCTELEM) DESCALE(z1 + MULTIPLY(tmp12, - FIX_1_847759065),
+				   CONST_BITS-PASS1_BITS);
+
+    /* Odd part per figure 8 --- note paper omits factor of sqrt(2).
+     * cK represents cos(K*pi/16).
+     * i0..i3 in the paper are tmp4..tmp7 here.
+     */
+
+    z1 = tmp4 + tmp7;
+    z2 = tmp5 + tmp6;
+    z3 = tmp4 + tmp6;
+    z4 = tmp5 + tmp7;
+    z5 = MULTIPLY(z3 + z4, FIX_1_175875602); /* sqrt(2) * c3 */
+
+    tmp4 = MULTIPLY(tmp4, FIX_0_298631336); /* sqrt(2) * (-c1+c3+c5-c7) */
+    tmp5 = MULTIPLY(tmp5, FIX_2_053119869); /* sqrt(2) * ( c1+c3-c5+c7) */
+    tmp6 = MULTIPLY(tmp6, FIX_3_072711026); /* sqrt(2) * ( c1+c3+c5-c7) */
+    tmp7 = MULTIPLY(tmp7, FIX_1_501321110); /* sqrt(2) * ( c1+c3-c5-c7) */
+    z1 = MULTIPLY(z1, - FIX_0_899976223); /* sqrt(2) * (c7-c3) */
+    z2 = MULTIPLY(z2, - FIX_2_562915447); /* sqrt(2) * (-c1-c3) */
+    z3 = MULTIPLY(z3, - FIX_1_961570560); /* sqrt(2) * (-c3-c5) */
+    z4 = MULTIPLY(z4, - FIX_0_390180644); /* sqrt(2) * (c5-c3) */
+
+    z3 += z5;
+    z4 += z5;
+
+    dataptr[7] = (DCTELEM) DESCALE(tmp4 + z1 + z3, CONST_BITS-PASS1_BITS);
+    dataptr[5] = (DCTELEM) DESCALE(tmp5 + z2 + z4, CONST_BITS-PASS1_BITS);
+    dataptr[3] = (DCTELEM) DESCALE(tmp6 + z2 + z3, CONST_BITS-PASS1_BITS);
+    dataptr[1] = (DCTELEM) DESCALE(tmp7 + z1 + z4, CONST_BITS-PASS1_BITS);
+
+    dataptr += DCTSIZE;		/* advance pointer to next row */
+  }
+
+  /* Pass 2: process columns.
+   * We remove the PASS1_BITS scaling, but leave the results scaled up
+   * by an overall factor of 8.
+   */
+
+  dataptr = data;
+  for (ctr = DCTSIZE-1; ctr >= 0; ctr--) {
+    tmp0 = dataptr[DCTSIZE*0] + dataptr[DCTSIZE*7];
+    tmp7 = dataptr[DCTSIZE*0] - dataptr[DCTSIZE*7];
+    tmp1 = dataptr[DCTSIZE*1] + dataptr[DCTSIZE*6];
+    tmp6 = dataptr[DCTSIZE*1] - dataptr[DCTSIZE*6];
+    tmp2 = dataptr[DCTSIZE*2] + dataptr[DCTSIZE*5];
+    tmp5 = dataptr[DCTSIZE*2] - dataptr[DCTSIZE*5];
+    tmp3 = dataptr[DCTSIZE*3] + dataptr[DCTSIZE*4];
+    tmp4 = dataptr[DCTSIZE*3] - dataptr[DCTSIZE*4];
+
+    /* Even part per LL&M figure 1 --- note that published figure is faulty;
+     * rotator "sqrt(2)*c1" should be "sqrt(2)*c6".
+     */
+
+    tmp10 = tmp0 + tmp3;
+    tmp13 = tmp0 - tmp3;
+    tmp11 = tmp1 + tmp2;
+    tmp12 = tmp1 - tmp2;
+
+    dataptr[DCTSIZE*0] = (DCTELEM) DESCALE(tmp10 + tmp11, PASS1_BITS);
+    dataptr[DCTSIZE*4] = (DCTELEM) DESCALE(tmp10 - tmp11, PASS1_BITS);
+
+    z1 = MULTIPLY(tmp12 + tmp13, FIX_0_541196100);
+    dataptr[DCTSIZE*2] = (DCTELEM) DESCALE(z1 + MULTIPLY(tmp13, FIX_0_765366865),
+					   CONST_BITS+PASS1_BITS);
+    dataptr[DCTSIZE*6] = (DCTELEM) DESCALE(z1 + MULTIPLY(tmp12, - FIX_1_847759065),
+					   CONST_BITS+PASS1_BITS);
+
+    /* Odd part per figure 8 --- note paper omits factor of sqrt(2).
+     * cK represents cos(K*pi/16).
+     * i0..i3 in the paper are tmp4..tmp7 here.
+     */
+
+    z1 = tmp4 + tmp7;
+    z2 = tmp5 + tmp6;
+    z3 = tmp4 + tmp6;
+    z4 = tmp5 + tmp7;
+    z5 = MULTIPLY(z3 + z4, FIX_1_175875602); /* sqrt(2) * c3 */
+
+    tmp4 = MULTIPLY(tmp4, FIX_0_298631336); /* sqrt(2) * (-c1+c3+c5-c7) */
+    tmp5 = MULTIPLY(tmp5, FIX_2_053119869); /* sqrt(2) * ( c1+c3-c5+c7) */
+    tmp6 = MULTIPLY(tmp6, FIX_3_072711026); /* sqrt(2) * ( c1+c3+c5-c7) */
+    tmp7 = MULTIPLY(tmp7, FIX_1_501321110); /* sqrt(2) * ( c1+c3-c5-c7) */
+    z1 = MULTIPLY(z1, - FIX_0_899976223); /* sqrt(2) * (c7-c3) */
+    z2 = MULTIPLY(z2, - FIX_2_562915447); /* sqrt(2) * (-c1-c3) */
+    z3 = MULTIPLY(z3, - FIX_1_961570560); /* sqrt(2) * (-c3-c5) */
+    z4 = MULTIPLY(z4, - FIX_0_390180644); /* sqrt(2) * (c5-c3) */
+
+    z3 += z5;
+    z4 += z5;
+
+    dataptr[DCTSIZE*7] = (DCTELEM) DESCALE(tmp4 + z1 + z3,
+					   CONST_BITS+PASS1_BITS);
+    dataptr[DCTSIZE*5] = (DCTELEM) DESCALE(tmp5 + z2 + z4,
+					   CONST_BITS+PASS1_BITS);
+    dataptr[DCTSIZE*3] = (DCTELEM) DESCALE(tmp6 + z2 + z3,
+					   CONST_BITS+PASS1_BITS);
+    dataptr[DCTSIZE*1] = (DCTELEM) DESCALE(tmp7 + z1 + z4,
+					   CONST_BITS+PASS1_BITS);
+
+    dataptr++;			/* advance pointer to next column */
+  }
+	for (i=0; i<DCTSIZE*DCTSIZE; i++) out[i] = (double)data[i];
+	free (data);
+}
+
+/**
+ * @brief Performs the inverse discrete cosine transform (IDCT) on a block of DCT coefficients.
+ *
+ * This function computes the inverse DCT for an 8x8 block of DCT coefficients using a slow implementation.
+ * It takes the quantized DCT coefficients, applies the inverse DCT transformation, and stores the resulting
+ * spatial domain values in the output array.
+ *
+ * @param[out] out Output array to store the 8x8 spatial block after applying the inverse DCT.
+ *                 The resulting values are stored in row-major order.
+ * @param[in] coef_block Input array containing the quantized DCT coefficients for the block.
+ *                      These are typically 64 DCT coefficients from a single 8x8 block.
+ * @param[in] qt Quantization matrix used to scale the DCT coefficients back to their original values before IDCT.
+ *              This matrix is used for the inverse quantization process before applying the IDCT.
+ *
+ * @note The input `coef_block` is expected to contain the quantized DCT coefficients in a flattened form (64 elements).
+ * @note The function uses a "slow" implementation of IDCT, which may be less efficient but provides a simple method for inverse transformation.
+ */
+void PerformSlowIDCT (double out[], const double coef_block[], const double qt[])
 {
   INT32 tmp0, tmp1, tmp2, tmp3;
   INT32 tmp10, tmp11, tmp12, tmp13;
@@ -303,227 +567,24 @@ void jpeg_idct_islow (double out[], const double coef_block[], const double qt[]
 	free (outbuf);
 }
 
-#define DCTELEM	int
-
-void jpeg_fdct_islow (double out[], const double in[])
-{
-  INT32 tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7;
-  INT32 tmp10, tmp11, tmp12, tmp13;
-  INT32 z1, z2, z3, z4, z5;
-  DCTELEM *dataptr, *data;
-  int ctr, i;
-
-  /* Pass 1: process rows. */
-  /* Note results are scaled up by sqrt(8) compared to a true DCT; */
-  /* furthermore, we scale the results by 2**PASS1_BITS. */
-	data = (DCTELEM*) malloc (DCTSIZE * DCTSIZE * sizeof (DCTELEM));
-	for (i=0; i<DCTSIZE * DCTSIZE; i++) data[i] = (int)in[i];
-
-  dataptr = data;
-  for (ctr = DCTSIZE-1; ctr >= 0; ctr--) {
-    tmp0 = dataptr[0] + dataptr[7];
-    tmp7 = dataptr[0] - dataptr[7];
-    tmp1 = dataptr[1] + dataptr[6];
-    tmp6 = dataptr[1] - dataptr[6];
-    tmp2 = dataptr[2] + dataptr[5];
-    tmp5 = dataptr[2] - dataptr[5];
-    tmp3 = dataptr[3] + dataptr[4];
-    tmp4 = dataptr[3] - dataptr[4];
-
-    /* Even part per LL&M figure 1 --- note that published figure is faulty;
-     * rotator "sqrt(2)*c1" should be "sqrt(2)*c6".
-     */
-
-    tmp10 = tmp0 + tmp3;
-    tmp13 = tmp0 - tmp3;
-    tmp11 = tmp1 + tmp2;
-    tmp12 = tmp1 - tmp2;
-
-    dataptr[0] = (DCTELEM) ((tmp10 + tmp11) << PASS1_BITS);
-    dataptr[4] = (DCTELEM) ((tmp10 - tmp11) << PASS1_BITS);
-
-    z1 = MULTIPLY(tmp12 + tmp13, FIX_0_541196100);
-    dataptr[2] = (DCTELEM) DESCALE(z1 + MULTIPLY(tmp13, FIX_0_765366865),
-				   CONST_BITS-PASS1_BITS);
-    dataptr[6] = (DCTELEM) DESCALE(z1 + MULTIPLY(tmp12, - FIX_1_847759065),
-				   CONST_BITS-PASS1_BITS);
-
-    /* Odd part per figure 8 --- note paper omits factor of sqrt(2).
-     * cK represents cos(K*pi/16).
-     * i0..i3 in the paper are tmp4..tmp7 here.
-     */
-
-    z1 = tmp4 + tmp7;
-    z2 = tmp5 + tmp6;
-    z3 = tmp4 + tmp6;
-    z4 = tmp5 + tmp7;
-    z5 = MULTIPLY(z3 + z4, FIX_1_175875602); /* sqrt(2) * c3 */
-
-    tmp4 = MULTIPLY(tmp4, FIX_0_298631336); /* sqrt(2) * (-c1+c3+c5-c7) */
-    tmp5 = MULTIPLY(tmp5, FIX_2_053119869); /* sqrt(2) * ( c1+c3-c5+c7) */
-    tmp6 = MULTIPLY(tmp6, FIX_3_072711026); /* sqrt(2) * ( c1+c3+c5-c7) */
-    tmp7 = MULTIPLY(tmp7, FIX_1_501321110); /* sqrt(2) * ( c1+c3-c5-c7) */
-    z1 = MULTIPLY(z1, - FIX_0_899976223); /* sqrt(2) * (c7-c3) */
-    z2 = MULTIPLY(z2, - FIX_2_562915447); /* sqrt(2) * (-c1-c3) */
-    z3 = MULTIPLY(z3, - FIX_1_961570560); /* sqrt(2) * (-c3-c5) */
-    z4 = MULTIPLY(z4, - FIX_0_390180644); /* sqrt(2) * (c5-c3) */
-
-    z3 += z5;
-    z4 += z5;
-
-    dataptr[7] = (DCTELEM) DESCALE(tmp4 + z1 + z3, CONST_BITS-PASS1_BITS);
-    dataptr[5] = (DCTELEM) DESCALE(tmp5 + z2 + z4, CONST_BITS-PASS1_BITS);
-    dataptr[3] = (DCTELEM) DESCALE(tmp6 + z2 + z3, CONST_BITS-PASS1_BITS);
-    dataptr[1] = (DCTELEM) DESCALE(tmp7 + z1 + z4, CONST_BITS-PASS1_BITS);
-
-    dataptr += DCTSIZE;		/* advance pointer to next row */
-  }
-
-  /* Pass 2: process columns.
-   * We remove the PASS1_BITS scaling, but leave the results scaled up
-   * by an overall factor of 8.
-   */
-
-  dataptr = data;
-  for (ctr = DCTSIZE-1; ctr >= 0; ctr--) {
-    tmp0 = dataptr[DCTSIZE*0] + dataptr[DCTSIZE*7];
-    tmp7 = dataptr[DCTSIZE*0] - dataptr[DCTSIZE*7];
-    tmp1 = dataptr[DCTSIZE*1] + dataptr[DCTSIZE*6];
-    tmp6 = dataptr[DCTSIZE*1] - dataptr[DCTSIZE*6];
-    tmp2 = dataptr[DCTSIZE*2] + dataptr[DCTSIZE*5];
-    tmp5 = dataptr[DCTSIZE*2] - dataptr[DCTSIZE*5];
-    tmp3 = dataptr[DCTSIZE*3] + dataptr[DCTSIZE*4];
-    tmp4 = dataptr[DCTSIZE*3] - dataptr[DCTSIZE*4];
-
-    /* Even part per LL&M figure 1 --- note that published figure is faulty;
-     * rotator "sqrt(2)*c1" should be "sqrt(2)*c6".
-     */
-
-    tmp10 = tmp0 + tmp3;
-    tmp13 = tmp0 - tmp3;
-    tmp11 = tmp1 + tmp2;
-    tmp12 = tmp1 - tmp2;
-
-    dataptr[DCTSIZE*0] = (DCTELEM) DESCALE(tmp10 + tmp11, PASS1_BITS);
-    dataptr[DCTSIZE*4] = (DCTELEM) DESCALE(tmp10 - tmp11, PASS1_BITS);
-
-    z1 = MULTIPLY(tmp12 + tmp13, FIX_0_541196100);
-    dataptr[DCTSIZE*2] = (DCTELEM) DESCALE(z1 + MULTIPLY(tmp13, FIX_0_765366865),
-					   CONST_BITS+PASS1_BITS);
-    dataptr[DCTSIZE*6] = (DCTELEM) DESCALE(z1 + MULTIPLY(tmp12, - FIX_1_847759065),
-					   CONST_BITS+PASS1_BITS);
-
-    /* Odd part per figure 8 --- note paper omits factor of sqrt(2).
-     * cK represents cos(K*pi/16).
-     * i0..i3 in the paper are tmp4..tmp7 here.
-     */
-
-    z1 = tmp4 + tmp7;
-    z2 = tmp5 + tmp6;
-    z3 = tmp4 + tmp6;
-    z4 = tmp5 + tmp7;
-    z5 = MULTIPLY(z3 + z4, FIX_1_175875602); /* sqrt(2) * c3 */
-
-    tmp4 = MULTIPLY(tmp4, FIX_0_298631336); /* sqrt(2) * (-c1+c3+c5-c7) */
-    tmp5 = MULTIPLY(tmp5, FIX_2_053119869); /* sqrt(2) * ( c1+c3-c5+c7) */
-    tmp6 = MULTIPLY(tmp6, FIX_3_072711026); /* sqrt(2) * ( c1+c3+c5-c7) */
-    tmp7 = MULTIPLY(tmp7, FIX_1_501321110); /* sqrt(2) * ( c1+c3-c5-c7) */
-    z1 = MULTIPLY(z1, - FIX_0_899976223); /* sqrt(2) * (c7-c3) */
-    z2 = MULTIPLY(z2, - FIX_2_562915447); /* sqrt(2) * (-c1-c3) */
-    z3 = MULTIPLY(z3, - FIX_1_961570560); /* sqrt(2) * (-c3-c5) */
-    z4 = MULTIPLY(z4, - FIX_0_390180644); /* sqrt(2) * (c5-c3) */
-
-    z3 += z5;
-    z4 += z5;
-
-    dataptr[DCTSIZE*7] = (DCTELEM) DESCALE(tmp4 + z1 + z3,
-					   CONST_BITS+PASS1_BITS);
-    dataptr[DCTSIZE*5] = (DCTELEM) DESCALE(tmp5 + z2 + z4,
-					   CONST_BITS+PASS1_BITS);
-    dataptr[DCTSIZE*3] = (DCTELEM) DESCALE(tmp6 + z2 + z3,
-					   CONST_BITS+PASS1_BITS);
-    dataptr[DCTSIZE*1] = (DCTELEM) DESCALE(tmp7 + z1 + z4,
-					   CONST_BITS+PASS1_BITS);
-
-    dataptr++;			/* advance pointer to next column */
-  }
-	for (i=0; i<DCTSIZE*DCTSIZE; i++) out[i] = (double)data[i];
-	free (data);
-}
-
-#pragma endregion ICDT/FDCT TRANSFORM
-
-// Write 1D vector
-template<typename T>
-void writeVectorToFile(const std::vector<T>& vec1D, const std::string& filename) {
-    std::ofstream outfile(filename);
-    if (!outfile) {
-        std::cerr << "Error opening file!" << std::endl;
-        return;
-    }
-
-    for (size_t row = 0 ; row < vec1D.size() ; row++) {
-        outfile << vec1D[row] << "\n";
-    }
-
-    outfile.close();
-}
-
-// Write 2D vector
-template<typename T>
-void writeVectorToFile(const std::vector<std::vector<T>>& vec2D, const std::string& filename) {
-    std::ofstream outfile(filename);
-    if (!outfile) {
-        std::cerr << "Error opening file!" << std::endl;
-        return;
-    }
-
-    for (size_t row = 0 ; row < vec2D.size() ; row++) {
-        for (size_t column = 0 ; column < vec2D[0].size() ; column++) {
-            outfile << vec2D[row][column] << "\n";
-        }
-    }
-
-    outfile.close();
-}
-
-// Write 3D vector
-template<typename T>
-void writeVectorToFile(const std::vector<std::vector<std::vector<T>>>& vec3D, const std::string& filename) {
-    std::ofstream outfile(filename);
-    if (!outfile) {
-        std::cerr << "Error opening file!" << std::endl;
-        return;
-    }
-
-    for (size_t depth = 0 ; depth < vec3D[0][0].size() ; depth++) {
-        for (size_t row = 0 ; row < vec3D.size() ; row++) {
-            for (size_t column = 0 ; column < vec3D[0].size() ; column++) {
-                outfile << vec3D[row][column][depth] << "\n";
-            }
-        }
-    }
-
-    outfile.close();
-}
-
-void print_quantization_table(jpeg_decompress_struct* cinfo) {
-    for (int tblno = 0; tblno < NUM_QUANT_TBLS; tblno++) {
-        JQUANT_TBL* qtbl = cinfo->quant_tbl_ptrs[tblno];
-        if (qtbl != nullptr) {
-            printf("Quantization table %d:\n", tblno + 1);
-            for (int i = 0; i < DCTSIZE; i++) {
-                for (int j = 0; j < DCTSIZE; j++) {
-                    printf("%5d ", qtbl->quantval[i * DCTSIZE + j]);
-                }
-                printf("\n");
-            }
-            printf("\n");
-        }
-    }
-}
-
-void Qmatrix(int quality, vector<vector<int>>& Q) {
+/**
+ * @brief Computes the quantization matrix for a given JPEG quality factor.
+ *
+ * This function generates an 8x8 quantization matrix `Q` based on the specified quality factor.
+ * It scales the default 50% quality quantization matrix (`Q50`) proportionally to the quality value,
+ * where higher quality results in lower quantization values (less compression).
+ *
+ * @param[in] quality JPEG quality factor (range: 1-100).
+ *                    - Values closer to 1 result in higher compression and lower image quality.
+ *                    - Values closer to 100 result in lower compression and higher image quality.
+ * @param[out] Q 8x8 quantization matrix to store the computed values.
+ *               - Higher values increase compression by reducing precision in the frequency domain.
+ *               - Lower values preserve more detail at the cost of higher file size.
+ *
+ * @note The input quality value is clamped to the range [1, 100] if it exceeds the bounds.
+ * @note The generated matrix is based on scaling the default JPEG 50% quality matrix.
+ */
+void ComputeQmatrix(int quality, vector<vector<int>>& Q) {
     // Default 50% quality quantization matrix
     const vector<vector<int>> Q50 = {
         {16, 11, 10, 16, 24, 40, 51, 61},
@@ -558,7 +619,16 @@ void Qmatrix(int quality, vector<vector<int>>& Q) {
     }
 }
 
-void extract_dct_coefficients(j_decompress_ptr cinfo, vector<vector<double>>& dct_coefficients) {
+/**
+ * @brief Extracts DCT coefficients from a JPEG image.
+ *
+ * This function reads the DCT coefficients from a JPEG image file using libjpeg.
+ * The coefficients are organized into a 2D matrix representing the entire image.
+ *
+ * @param[in] cinfo JPEG decompression structure for reading the file.
+ * @param[out] dct_coefficients 2D vector to store the DCT coefficients of the image.
+ */
+void ExtractDCTCoefficients(j_decompress_ptr cinfo, vector<vector<double>>& dct_coefficients) {
     // Read DCT coefficient arrays
     jvirt_barray_ptr *coef_arrays = jpeg_read_coefficients(cinfo);
 
@@ -608,20 +678,22 @@ void extract_dct_coefficients(j_decompress_ptr cinfo, vector<vector<double>>& dc
     }
 }
 
-void print_dct_coefficients(vector<vector<double>>& dct_coefficients) {
-    cout << "Full image DCT coefficients:\n";
-    int row_count = 0;
-    for (const auto& row : dct_coefficients) {
-        cout << "Row " << row_count << ": ";
-        row_count++;
-        for (const auto& val : row) {
-            cout << val << " ";
-        }
-        cout << endl;
-    }
-}
-
-void read_jpeg_info(FILE *infile, jpeg_decompress_struct& cinfo, vector<vector<double>>& dct_coefficients) {
+/**
+ * @brief Reads JPEG file information and extracts its DCT coefficients.
+ *
+ * This function initializes a JPEG decompression structure, reads the header information
+ * of the input JPEG file, and extracts its quantized DCT coefficients into a 2D matrix.
+ *
+ * @param[in] infile Pointer to the opened JPEG file to be read.
+ * @param[out] cinfo JPEG decompression structure used to store the file's metadata and state.
+ * @param[out] dct_coefficients 2D vector to store the quantized DCT coefficients from the JPEG image.
+ *                              - Rows correspond to image height in pixels.
+ *                              - Columns correspond to image width in pixels.
+ *
+ * @note This function assumes the input file is a valid JPEG image.
+ * @note Calls `ExtractDCTCoefficients` to process the coefficient arrays.
+ */
+void ReadJPEGInfo(FILE *infile, jpeg_decompress_struct& cinfo, vector<vector<double>>& dct_coefficients) {
     struct jpeg_error_mgr jerr{};
 
     cinfo.err = jpeg_std_error(&jerr);
@@ -629,19 +701,19 @@ void read_jpeg_info(FILE *infile, jpeg_decompress_struct& cinfo, vector<vector<d
     jpeg_stdio_src(&cinfo, infile);
     jpeg_read_header(&cinfo, TRUE);
 
-    extract_dct_coefficients(&cinfo, dct_coefficients);
+    ExtractDCTCoefficients(&cinfo, dct_coefficients);
 }
 
-void printMatrix(const vector<vector<int>>& Q) {
-    for (int i = 0; i < 8; i++) {
-        for (int j = 0; j < 8; j++) {
-            cout << Q[i][j] << " "; // Dereference the shared_ptr and access elements
-        }
-        cout << endl;
-    }
-}
-
-void DC_pairs(vector<vector<int>>& E) {
+/**
+ * @brief Initializes contributing quantization pairs.
+ *
+ * Populates the matrix `E` with contributing quantization pairs (q1, q2)
+ * based on the conditions that determine if a pair contributes to the embedding process.
+ *
+ * @param[out] E 3D matrix to store contributing pairs and their properties.
+ * @param[in] MaxQ Maximum quantization value to consider.
+ */
+void InitializeContributingPairs(vector<vector<int>>& E) {
     const int MaxQ = 121; // Maximal quantization step
 
     // Calculate contributing pairs of quantization steps
@@ -655,6 +727,17 @@ void DC_pairs(vector<vector<int>>& E) {
     }
 }
 
+/**
+ * @brief Converts a 2D matrix into a 3D DCT coefficient structure.
+ *
+ * Reshapes a 2D image plane into a 3D vector structure where the first two dimensions represent
+ * the block indices, and the third dimension stores DCT coefficients in column-major order.
+ *
+ * @param[in] plane 2D matrix representing the image.
+ * @param[in] Y Height of the image in pixels.
+ * @param[in] X Width of the image in pixels.
+ * @param[out] D1 3D vector to store the reshaped blocks of DCT coefficients.
+ */
 void PlaneToVec(const vector<vector<double>>& plane, const int Y, const int X, vector<vector<vector<int>>>& D1) {
     const int M = X / 8;  // Count of columns
     const int N = Y / 8;  // Count of rows
@@ -676,6 +759,17 @@ void PlaneToVec(const vector<vector<double>>& plane, const int Y, const int X, v
     }
 }
 
+/**
+ * @brief Converts a 3D DCT coefficient structure into a 2D image plane.
+ *
+ * Reconstructs a 2D matrix from a 3D structure where blocks are organized column-major.
+ * Each block contributes an 8x8 region in the output 2D matrix.
+ *
+ * @param[out] plane 2D matrix to store the reconstructed image.
+ * @param[in] MB Number of block rows.
+ * @param[in] NB Number of block columns.
+ * @param[in] cube 3D vector of DCT coefficients.
+ */
 void VecToPlane(vector<vector<double>>& plane, const int MB, const int NB, const vector<vector<vector<double>>>& cube) {
     // Define the dimensions for rows and columns based on Cube size
     const int M = NB * 8; // Count of columns in Plane
@@ -698,15 +792,26 @@ void VecToPlane(vector<vector<double>>& plane, const int MB, const int NB, const
     }
 }
 
-vector<vector<double>> showD(const vector<vector<vector<int>>>& D, const vector<vector<int>>& Q) {
-    int B = 8;               // Block size
-    int MD = D.size();       // Number of 8x8 blocks in the vertical direction
-    int ND = D[0].size();    // Number of 8x8 blocks in the horizontal direction
-    int M = B * MD;          // Full image height in pixels
-    int N = B * ND;          // Full image width in pixels
-
-    // Decompressed image matrix
-    vector X(M, vector<double>(N, 0.0));
+/**
+ * @brief Decompresses a DCT-transformed image back into the spatial domain.
+ *
+ * This function takes quantized DCT coefficients organized into 8x8 blocks (`D`), applies
+ * inverse quantization and inverse discrete cosine transform (IDCT) using the quantization
+ * matrix (`Q`), and reconstructs the decompressed image (`X`) in the spatial domain.
+ *
+ * @param[in] D 3D vector containing quantized DCT coefficients.
+ *              - Dimensions: [MD][ND][64], where MD and ND are the number of vertical and horizontal blocks.
+ *              - Each block contains 64 coefficients in a flattened 8x8 structure, arranged column-major.
+ * @param[in] Q 2D vector representing the quantization matrix (8x8).
+ * @param[out] X 2D vector to store the decompressed image in the spatial domain.
+ *               - Dimensions: [MD*8][ND*8], where each block contributes an 8x8 region.
+ *
+ * @note This function assumes the DCT coefficients and quantization matrices are valid.
+ * @note Uses the `jpeg_idct_islow` function to perform IDCT with input quantized coefficients and quantization steps.
+ */
+void DecompressImage(const vector<vector<vector<int>>>& D, const vector<vector<int>>& Q, vector<vector<double>>& X) {
+    const int MD = D.size();       // Number of 8x8 blocks in the vertical direction
+    const int ND = D[0].size();    // Number of 8x8 blocks in the horizontal direction
 
     // Temporary block to store the spatial representation of a DCT block
     vector Dblock(8, vector<int>(8));
@@ -714,6 +819,7 @@ vector<vector<double>> showD(const vector<vector<vector<int>>>& D, const vector<
     // Loop over each block
     for (int i = 0; i < MD; i++) {
         for (int j = 0; j < ND; j++) {
+            int B = 8;
             // Copy the DCT coefficients of the (i, j)-th block into Dblock
             for (int k = 0; k < B; k++) {
                 for (int l = 0; l < B; l++) {
@@ -759,7 +865,7 @@ vector<vector<double>> showD(const vector<vector<vector<int>>>& D, const vector<
             }
 
             //FUNCTION HEADER: jpeg_idct_islow (double out[], double coef_block[], double qt[])
-            jpeg_idct_islow(out_array, coefs_array, quant_array);
+            PerformSlowIDCT(out_array, coefs_array, quant_array);
 
             // Place the spatial block into the decompressed image X
             counter = 0;
@@ -772,11 +878,18 @@ vector<vector<double>> showD(const vector<vector<vector<int>>>& D, const vector<
             }
         }
     }
-
-    return X;  // Return the decompressed image
 }
 
-void save_jpeg(const char* filename, const vector<vector<double>>& image, int quality) {
+/**
+ * @brief Saves a 2D image matrix as a JPEG file.
+ *
+ * Compresses and writes a 2D image matrix into a JPEG file with a specified quality.
+ *
+ * @param[in] filename Path to the output JPEG file.
+ * @param[in] image 2D image matrix to save.
+ * @param[in] quality JPEG compression quality (1-100).
+ */
+void SaveJPEG(const char* filename, const vector<vector<double>>& image, int quality) {
     // Define image dimensions based on X1
     int width = image[0].size();
     int height = image.size();
@@ -812,7 +925,6 @@ void save_jpeg(const char* filename, const vector<vector<double>>& image, int qu
 
     // Allocate memory for row buffer
     JSAMPROW row_pointer[1];
-    int row_stride = width; // Number of bytes in a row (width of image)
 
     // Write each row of the image to the output JPEG
     while (cinfo.next_scanline < cinfo.image_height) {
@@ -835,8 +947,21 @@ void save_jpeg(const char* filename, const vector<vector<double>>& image, int qu
     cout << "JPEG image saved successfully: " << filename << endl;
 }
 
-// Function to count non-zeros in a 3D vector for specified range
-int count_nonzeros(const vector<vector<vector<int>>>& matrix, const int start, const int end) {
+/**
+ * @brief Counts the number of non-zero coefficients in a 3D matrix within a specified range.
+ *
+ * This function iterates through the given 3D matrix and counts the number of non-zero elements
+ * within the specified range of the last dimension. The range is defined by the `start` and `end` indices
+ * (inclusive).
+ *
+ * @param[in] matrix Input 3D matrix to search for non-zero coefficients.
+ * @param[in] start Starting index for the range in the third dimension (inclusive).
+ * @param[in] end Ending index for the range in the third dimension (inclusive).
+ * @return The count of non-zero coefficients in the specified range.
+ *
+ * @note Assumes that `start` and `end` are valid indices within the bounds of the third dimension of the matrix.
+ */
+int CountNonZeroCoefficients(const vector<vector<vector<int>>>& matrix, const int start, const int end) {
     int non_zero_count = 0;
     for (size_t i = 0; i < matrix.size(); ++i) {
         for (size_t j = 0; j < matrix[i].size(); ++j) {
@@ -850,8 +975,20 @@ int count_nonzeros(const vector<vector<vector<int>>>& matrix, const int start, c
     return non_zero_count;
 }
 
-// Function to calculate capacity and number of non-zero coefficients
-void DC_capacity_indiv(const vector<vector<int>>& Qm1, const vector<vector<int>>& Qm2,
+/**
+ * @brief Computes the capacity and number of non-zero coefficients.
+ *
+ * Determines the embedding capacity and the total number of non-zero DCT coefficients
+ * in the image by evaluating the contributing quantization pairs.
+ *
+ * @param[in] Qm1 First quantization matrix.
+ * @param[in] Qm2 Second quantization matrix.
+ * @param[in] D 3D array of DCT coefficients.
+ * @param[in] E Matrix of contributing quantization pairs.
+ * @param[out] Cap Calculated embedding capacity.
+ * @param[out] N0 Count of non-zero DCT coefficients.
+ */
+void ComputeCapacity(const vector<vector<int>>& Qm1, const vector<vector<int>>& Qm2,
                        const vector<vector<vector<int>>>& D, const vector<vector<int>>& E,
                        size_t& Cap, int& N0) {
     Cap = 0;
@@ -903,8 +1040,17 @@ void DC_capacity_indiv(const vector<vector<int>>& Qm1, const vector<vector<int>>
     cout << "Nonzero coefs of image: " << N0 << endl;
 }
 
-// raw2jpg02raw function for quantized DCT coefficients
-vector<vector<double>> raw2jpg02raw(const vector<vector<double>>& Z, const vector<vector<double>>& Qf) {
+/**
+ * @brief Converts a spatial 8x8 block into quantized DCT coefficients.
+ *
+ * Performs a discrete cosine transform (DCT) on a spatial 8x8 block and quantizes the resulting coefficients using the provided quantization matrix.
+ *
+ * @param[in] Z Input 8x8 spatial block.
+ * @param[in] Qf Quantization matrix (8x8).
+ * @param[out] QD Output 8x8 block of quantized DCT coefficients.
+ * @return Quantized DCT coefficients as an 8x8 block.
+ */
+void ComputeQuantizedDCT(const vector<vector<double>>& Z, const vector<vector<double>>& Qf, vector<vector<double>>& QD) {
     std::vector Z_shifted(8, std::vector(8, 0.0));
 
     // Shift matrix values by subtracting 128 from each element
@@ -921,7 +1067,7 @@ vector<vector<double>> raw2jpg02raw(const vector<vector<double>>& Z, const vecto
         for (int j = 0; j < 8; ++j)
             in[8 * i + j] = Z_shifted[i][j];
 
-    jpeg_fdct_islow(out, in);
+    PerformSlowFDCT(out, in);
 
     // Column-first
     std::vector D(8, vector(8, 0.0));
@@ -930,17 +1076,26 @@ vector<vector<double>> raw2jpg02raw(const vector<vector<double>>& Z, const vecto
             D[i][j] = out[ 8 * i + j];
 
     // Quantize the DCT coefficients
-    std::vector QD(8, std::vector(8, 0.0));
     for (int i = 0; i < 8; ++i) {
         for (int j = 0; j < 8; ++j) {
             QD[i][j] = D[i][j] / (Qf[i][j] * 8);
         }
     }
-
-    return QD;
 }
 
-void DCTcutraw(const vector<vector<double>>& X, vector<vector<vector<double>>>& D_raw) {
+/**
+ * @brief Calculates the DCT coefficients for an image and organizes them into blocks.
+ *
+ * This function computes the discrete cosine transform (DCT) coefficients for the input 2D image matrix `X`.
+ * The image is divided into 8x8 blocks, and the DCT coefficients for each block are stored in a 3D array `D_raw`.
+ * If the dimensions of the image are not multiples of 8, the image is cropped to the nearest 8-pixel boundary.
+ *
+ * @param[in] X Input 2D matrix representing the image (grayscale intensity values).
+ * @param[out] D_raw 3D array to store the calculated DCT coefficients.
+ *                  - The first two dimensions represent the block indices.
+ *                  - The third dimension contains the 64 coefficients of the corresponding 8x8 DCT block, arranged column-major.
+ */
+void ComputeDCTBlocks(const vector<vector<double>>& X, vector<vector<vector<double>>>& D_raw) {
     const int B = 8;  // Block size
     const int B2 = B * B;
 
@@ -967,8 +1122,11 @@ void DCTcutraw(const vector<vector<double>>& X, vector<vector<vector<double>>>& 
                 }
             }
 
+            auto Qf = std::vector(B, std::vector<double>(B, 1));
+            auto Dblock = std::vector(8, std::vector(8, 0.0));
+
             // Perform DCT (raw2jpg02raw function to be implemented later)
-            std::vector<std::vector<double>> Dblock = raw2jpg02raw(Block, std::vector(B, std::vector<double>(B, 1)));
+            ComputeQuantizedDCT(Block, Qf, Dblock);
 
             // Flatten the DCT coefficients and assign them to the D_raw matrix (correcting the indexing)
             int k = 0;
@@ -982,7 +1140,18 @@ void DCTcutraw(const vector<vector<double>>& X, vector<vector<vector<double>>>& 
     }
 }
 
-void generateMessage(vector<int>& Message, const size_t Cap, const size_t AbsoluteMsgLength) {
+/**
+ * @brief Generates a random message for embedding.
+ *
+ * Creates a binary random message with 1's and -1's, generated with a specific bias.
+ * The message length is determined by the minimum of the available capacity and the absolute message length.
+ *
+ * @param[out] Message Vector to store the generated message.
+ * @param[in] Cap Maximum embedding capacity.
+ * @param[in] AbsoluteMsgLength Desired length of the message to generate.
+ * @param[in] seed Seed for random number generation.
+ */
+void GenerateMessage(vector<int>& Message, const size_t Cap, const size_t AbsoluteMsgLength) {
     // Set the message length to the minimum of Cap and AbsoluteMsgLength
     size_t MessageLength = std::min(Cap, AbsoluteMsgLength);
 
@@ -1005,7 +1174,7 @@ void generateMessage(vector<int>& Message, const size_t Cap, const size_t Absolu
     }
 }
 
-void sortRowsEmulation(vector<double>& diff_vector, vector<int>& indices) {
+void SortRowsEmulation(vector<double>& diff_vector, vector<int>& indices) {
     const size_t n = diff_vector.size();
 
     for (size_t i = 0; i < n; ++i) {
@@ -1029,25 +1198,33 @@ void sortRowsEmulation(vector<double>& diff_vector, vector<int>& indices) {
     }
 }
 
-int roundToInt(const double val) {
-    return static_cast<int>(std::round(val));
-}
-
-int sign(const int val) {
-    return (val > 0) - (val < 0);
-}
-
-vector<vector<vector<double>>> embedMessage(const vector<vector<int>>& Qm1, const vector<vector<int>>& Qm2,
+/**
+ * @brief Embeds a message into the DCT coefficients.
+ *
+ * Performs the embedding of a random message into the double-compressed DCT coefficients (D2n)
+ * while ensuring the coefficients adhere to specific quantization conditions.
+ *
+ * @param[in] D1 Original DCT coefficients.
+ * @param[in] D2raw Double-compressed raw DCT coefficients.
+ * @param[in] Qm1 First quantization matrix.
+ * @param[in] Qm2 Second quantization matrix.
+ * @param[in] E Matrix of contributing quantization pairs.
+ * @param[in] Message The message to embed.
+ * @param[out] D2n Resulting DCT coefficients after embedding.
+ * @param[out] changes Counter for the number of coefficient changes.
+ * @param[out] Zeros Counter for zero-valued coefficients in the result.
+ * @param[out] NonZeros Counter for non-zero coefficients in the result.
+ * @param[in] nonzero_spec Specification to determine which coefficients to include in calculations.
+ */
+void EmbedMessage(const vector<vector<int>>& Qm1, const vector<vector<int>>& Qm2,
                   const vector<vector<int>>& E, const vector<vector<vector<int>>>& D1,
                   const vector<double>& Diff_vector, const vector<int>& Message,
-                  const vector<vector<vector<double>>>& D2raw,
+                  const vector<vector<vector<double>>>& D2raw, vector<vector<vector<double>>>& D2n,
                   const string& nonzero_spec, const int MB, const int NB) {
     int c = -1;                   // Message bit counter
     int d = -1;                   // Contributing multiples counter
     int changes = 0;             // Number of changes against cover
     int NonZeros = 0, Zeros = 0; // Zero and non-zero counters
-
-    std::vector D2n(MB, std::vector(NB, std::vector<double>(64)));
 
     for (int i = 0; i < MB; ++i) {
         for (int j = 0; j < NB; ++j) {
@@ -1073,11 +1250,11 @@ vector<vector<vector<double>>> embedMessage(const vector<vector<int>>& Qm1, cons
                         if (Diff_vector[d] == 1) {
                             // Embed one message bit
                             c++;
-                            D2n[i][j][k] = (D1[i][j][k] * q1 + sign(D1[i][j][k]) * Message[c] * q2 / 2) / q2;
+                            D2n[i][j][k] = (D1[i][j][k] * q1 + Sign(D1[i][j][k]) * Message[c] * q2 / 2) / q2;
 
-                            int cover_value = roundToInt(D2raw[i][j][k] / q2);
-                            if (std::abs(q2 * cover_value - q1 * roundToInt(q2 * cover_value / q1)) == q2 / 2) {
-                                cover_value += sign(D2raw[i][j][k] / q2 - cover_value);
+                            int cover_value = RoundToInt(D2raw[i][j][k] / q2);
+                            if (std::abs(q2 * cover_value - q1 * RoundToInt(q2 * cover_value / q1)) == q2 / 2) {
+                                cover_value += Sign(D2raw[i][j][k] / q2 - cover_value);
                             }
 
                             if (D2n[i][j][k] != cover_value) {
@@ -1085,17 +1262,17 @@ vector<vector<vector<double>>> embedMessage(const vector<vector<int>>& Qm1, cons
                             }
                         } else {
                             // D1[i][j][k] is not suitable for embedding
-                            D2n[i][j][k] = roundToInt(D2raw[i][j][k] / q2);
-                            if (std::abs(q2 * D2n[i][j][k] - q1 * roundToInt(q2 * D2n[i][j][k] / q1)) == q2 / 2) {
-                                D2n[i][j][k] += sign(D2raw[i][j][k] / q2 - D2n[i][j][k]);
+                            D2n[i][j][k] = RoundToInt(D2raw[i][j][k] / q2);
+                            if (std::abs(q2 * D2n[i][j][k] - q1 * RoundToInt(q2 * D2n[i][j][k] / q1)) == q2 / 2) {
+                                D2n[i][j][k] += Sign(D2raw[i][j][k] / q2 - D2n[i][j][k]);
                             }
                         }
                     } else {
                         // D1[i][j][k] is not a contributing multiple
-                        D2n[i][j][k] = roundToInt(D2raw[i][j][k] / q2);
+                        D2n[i][j][k] = RoundToInt(D2raw[i][j][k] / q2);
 
-                        if (std::abs(q2 * D2n[i][j][k] - q1 * roundToInt(q2 * D2n[i][j][k] / q1)) == q2 / 2) {
-                            D2n[i][j][k] += sign(D2raw[i][j][k] / q2 - D2n[i][j][k]);
+                        if (std::abs(q2 * D2n[i][j][k] - q1 * RoundToInt(q2 * D2n[i][j][k] / q1)) == q2 / 2) {
+                            D2n[i][j][k] += Sign(D2raw[i][j][k] / q2 - D2n[i][j][k]);
 
                         }
                     }
@@ -1114,7 +1291,7 @@ vector<vector<vector<double>>> embedMessage(const vector<vector<int>>& Qm1, cons
             // Non-contributing pair, round to closest multiple of q2
             for (int i = 0; i < MB; ++i) {
                 for (int j = 0; j < NB; ++j) {
-                    D2n[i][j][k] = roundToInt(D2raw[i][j][k] / q2);
+                    D2n[i][j][k] = RoundToInt(D2raw[i][j][k] / q2);
                     if (nonzero_spec == "DC-DC" || nonzero_spec == "DC-AC") {
                         if (D2n[i][j][k]) NonZeros++;
                         else Zeros++;
@@ -1130,19 +1307,29 @@ vector<vector<vector<double>>> embedMessage(const vector<vector<int>>& Qm1, cons
     cout << "\n ---- Message embedded! ----" << endl;
     std::cout << "Changes: " << changes << "\n";
     std::cout << "Zeros: " << Zeros << ", NonZeros: " << NonZeros << "\n";
-
-    return D2n;
 }
 
-int save_perturbed_jpeg(vector<vector<double>>& Plane) {
+/**
+ * @brief Saves a perturbed image (after applying steganography or other transformations) as a JPEG file.
+ *
+ * This function takes a 2D matrix representing the perturbed image in the spatial domain (e.g., after applying DCT, quantization, or embedding)
+ * and saves it as a JPEG file. The image is encoded into the JPEG format with a specified compression quality.
+ *
+ * @param[in] Plane 2D matrix representing the perturbed image in the spatial domain.
+ *                  - This matrix is typically a grayscale image, where each element corresponds to a pixel value.
+ * @return Returns `true` on successful saving, or `false` if an error occurs during the process.
+ *
+ * @note The compression quality of the JPEG file can be adjusted by modifying the quality parameter, which is typically set between 1 (lowest quality) and 100 (highest quality).
+ */
+int SavePerturbedJPEG(vector<vector<double>>& Plane) {
     FILE *infile = fopen("/home/mato/CLionProjects/StegoDisk/cover.jpg", "rb");
     if (!infile) {
         fprintf(stderr, "Can't open %s\n", "/home/mato/CLionProjects/StegoDisk/cover.jpg");
         return -1;
     }
 
-    jpeg_decompress_struct cinfo;
-    jpeg_error_mgr jerr;
+    jpeg_decompress_struct cinfo{};
+    jpeg_error_mgr jerr{};
     cinfo.err = jpeg_std_error(&jerr);
     jpeg_create_decompress(&cinfo);
     jpeg_stdio_src(&cinfo, infile);
@@ -1150,8 +1337,8 @@ int save_perturbed_jpeg(vector<vector<double>>& Plane) {
 
     jvirt_barray_ptr* coef_arrays = jpeg_read_coefficients(&cinfo);
 
-    jpeg_compress_struct cinfo_out;
-    jpeg_error_mgr jerr_out;
+    jpeg_compress_struct cinfo_out{};
+    jpeg_error_mgr jerr_out{};
 
     cinfo_out.err = jpeg_std_error(&jerr_out);
     jpeg_create_compress(&cinfo_out);
@@ -1199,141 +1386,121 @@ int save_perturbed_jpeg(vector<vector<double>>& Plane) {
     jpeg_destroy_decompress(&cinfo);
     fclose(infile);
 
+    cout << "\n ---- Perturbed jpeg image saved successfully! ----" << endl;
+
     return 0;
 }
 
 int main() {
     cout << "\n ---- Algorithm started successfully! ----" << endl;
 
-    std::srand(12345);
-
-    auto filename = "/home/mato/CLionProjects/StegoDisk/img_1200.jpg";
+    const string method = "pqt";
+    const string nonzero_spec = "AC-DC";
+    constexpr double capacity = 0.1;
+    constexpr int Q1 = 85;
+    constexpr int Q2 = 70;
 
     FILE *infile;
+    jpeg_decompress_struct cinfo{};
+    auto dct_coefficients = vector<vector<double>>();
+    auto Qm1 = vector(8, vector<int>(8));
+    auto Qm2 = vector(8, vector<int>(8));
+    auto E = vector(121, vector<int>(121));
+    auto D1 = vector<vector<vector<int>>>();
+
+    //std::srand(12345);
+
+    auto filename = "/home/mato/CLionProjects/StegoDisk/img_1200.jpg";
     if ((infile = fopen(filename, "rb")) == nullptr) {
         fprintf(stderr, "Can't open %s\n", filename);
         return -1;
     }
 
-    jpeg_decompress_struct cinfo{};
-    auto dct_coefficients = vector<vector<double>>();
+    ReadJPEGInfo(infile, cinfo, dct_coefficients);
 
-    read_jpeg_info(infile, cinfo, dct_coefficients);
+    int image_height = cinfo.image_height;
+    int image_width = cinfo.image_width;
 
-    int Y = cinfo.image_height;
-    int X = cinfo.image_width;
-
-    auto Qm1 = vector(8, vector<int>(8));
-    auto Qm2 = vector(8, vector<int>(8));
-
-    // Generate quantization matrix for the given quality
-    Qmatrix(Q1, Qm1);
-    Qmatrix(Q2, Qm2);
+    ComputeQmatrix(Q1, Qm1);
+    ComputeQmatrix(Q2, Qm2);
 
     // Print the generated quantization matrix
-    /*cout << "Quantization Matrix Qm1 for quality " << Q1 << endl;
-    printMatrix(Qm1);
-    cout << "Quantization Matrix Qm2 for quality " << Q2 << endl;
-    printMatrix(Qm2);*/
+    //printMatrix(Qm1);
+    //printMatrix(Qm2);
 
-    // Create a 3D vector with dimensions [121][121][3]
-    auto E = vector(121, vector<int>(121));
+    InitializeContributingPairs(E);
 
-    // Call the DC_pairs function
-    DC_pairs(E);
+    PlaneToVec(dct_coefficients, image_height, image_width, D1);
 
-    // Create the output vector D1
-    auto D1 = vector<vector<vector<int>>>();
-
-    // Call the PlaneToVec function
-    PlaneToVec(dct_coefficients, Y, X, D1);
-
-    // Decompress D1 to the spatial domain
-    auto X1 = showD(D1, Qm1);
+    auto X1 = vector(image_height, vector(image_width, 0.0));
+    DecompressImage(D1, Qm1, X1);
 
     int MB = floor(X1.size() / 8);
     int NB = floor(X1[0].size() / 8);
 
-    //second compression, write the compressed image into cover directory
-    save_jpeg("/home/mato/CLionProjects/StegoDisk/cover.jpg", X1, Q2);
+    // Write the compressed image into cover directory
+    SaveJPEG("/home/mato/CLionProjects/StegoDisk/cover.jpg", X1, Q2);
 
-    // dispose resources
     fclose(infile);
     jpeg_destroy_decompress(&cinfo);
-
 
     //-------------------------------
     // SECOND COMPRESSION STARTS HERE
     //-------------------------------
 
+    size_t AbsoluteMsgLength = 0;
+    size_t Cap;
+    int N0;
 
     FILE *infileTwo;
+    jpeg_decompress_struct cinfoTwo{};
+    auto dct_coefficients_two = vector<vector<double>>();
+    auto D1_two = vector<vector<vector<int>>>();
+    auto D2raw = vector<vector<vector<double>>>();
+    vector<int> Message;
+    std::vector D2n(MB, std::vector(NB, std::vector<double>(64)));
+    vector<vector<double>> resultPlane;
+
     if ((infileTwo = fopen("/home/mato/CLionProjects/StegoDisk/cover.jpg", "rb")) == nullptr) {
         fprintf(stderr, "Can't open %s\n", "/home/mato/CLionProjects/StegoDisk/cover.jpg");
         return -1;
     }
 
-    jpeg_decompress_struct cinfoTwo{};
-    auto dct_coefficients_two = vector<vector<double>>();
+    ReadJPEGInfo(infileTwo, cinfoTwo, dct_coefficients_two);
 
-    read_jpeg_info(infileTwo, cinfoTwo, dct_coefficients_two);
+    PlaneToVec(dct_coefficients_two, image_height, image_width, D1_two);
 
-    // Create the output vector D1
-    auto D1_two = vector<vector<vector<int>>>();
-
-    // Call the PlaneToVec function
-    PlaneToVec(dct_coefficients_two, Y, X, D1_two);
-
-    auto DCTs_DoubleCompressed = D1_two;
-
-    // For storing absolute message length
-    const double capacity = 0.1;
-    size_t AbsoluteMsgLength = 0;
-    const string nonzero_spec = "AC-DC";
-
-    // 'DC-DC' condition
     if (nonzero_spec == "DC-DC") {
         // Include all terms (DC included) in capacity calculations
-        int Nz_all = count_nonzeros(DCTs_DoubleCompressed, 0, 63); // Count non-zeros in entire matrix
+        int Nz_all = CountNonZeroCoefficients(D1_two, 0, 63); // Count non-zeros in entire matrix
         AbsoluteMsgLength = round(Nz_all * capacity);
     }
 
-    // 'AC-DC' condition
     if (nonzero_spec == "AC-DC") {
         // Do not include DC terms in capacity calculations, but use them for embedding
-        int Nz_ac = count_nonzeros(DCTs_DoubleCompressed, 1, 63); // Count non-zeros in AC terms (ignoring the first DC component)
+        int Nz_ac = CountNonZeroCoefficients(D1_two, 1, 63); // Count non-zeros in AC terms (ignoring the first DC component)
         AbsoluteMsgLength = round(Nz_ac * capacity);
     }
 
-    // 'AC-AC' condition
     if (nonzero_spec == "AC-AC") {
         // Do not include DC terms in capacity calculations and do not embed into them
-        int Nz_ac = count_nonzeros(DCTs_DoubleCompressed, 1, 63); // Count non-zeros in AC terms
+        int Nz_ac = CountNonZeroCoefficients(D1_two, 1, 63); // Count non-zeros in AC terms
         AbsoluteMsgLength = round(Nz_ac * capacity);
 
         // Modify the quantization matrix to make DC terms non-contributing
         Qm1[0][0] = 6;
     }
 
-    size_t Cap;
-    int N0;
-
-    // Calculate the capacity and the number of non-zero coefficients
-    // embedding capacity calculation (after the first compression)
-    DC_capacity_indiv(Qm1, Qm2, D1, E, Cap, N0);
-
-    auto D2raw = vector<vector<vector<double>>>();
+    ComputeCapacity(Qm1, Qm2, D1, E, Cap, N0);
 
     // Second compression, without quantization
-    DCTcutraw(X1, D2raw);
+    ComputeDCTBlocks(X1, D2raw);
 
     // Generate random secret message 1's and -1's of length MessageLength
-    vector<int> Message;
     size_t MessageLength = Cap > AbsoluteMsgLength ? AbsoluteMsgLength : Cap;
-    generateMessage(Message, Cap, MessageLength);
+    GenerateMessage(Message, Cap, MessageLength);
 
     // Initialize Diff_vector and Diff_matrix
-    const string method = "pqt";
     vector Diff_vector(Cap, 0.0);
     vector Diff_matrix(MB, vector(NB, vector(64, 0.0)));
 
@@ -1345,12 +1512,10 @@ int main() {
             int q1 = Qm1[k % 8][k / 8];  // q1 = first quantization step
             int q2 = Qm2[k % 8][k / 8];  // q2 = second quantization step
 
-            //if (E[q1-1][q2-1][0] != 0) {  // If q1, q2 is a contributing pair
             if (E[q1-1][q2-1] != 0 && E[q1-1][q2-1] % 2 == 0) {
                 // Loop over all blocks
                 for (int i = 0; i < MB; ++i) {
                     for (int j = 0; j < NB; ++j) {
-                        //if (std::fmod(D1[i][j][k] - E[q1-1][q2-1][1], E[q1-1][q2-1][2]) == 0) {
                         if (std::fmod(D1[i][j][k] - E[q1-1][q2-1] * 0.5, E[q1-1][q2-1]) == 0) {
                             // D1(i,j,k) is the contributing multiple
                             c++;  // Update message bit counter
@@ -1370,7 +1535,7 @@ int main() {
 
         vector X1_T(MB, std::vector(NB, std::vector(64, 0)));
 
-        PlaneToVec(X1, Y, X, X1_T);
+        PlaneToVec(X1, image_height, image_width, X1_T);
 
         for (int i = 0; i < MB; ++i) {
             for (int j = 0; j < NB; ++j) {
@@ -1436,7 +1601,7 @@ int main() {
 
         vector X1_T(MB, std::vector(NB, std::vector(64, 0)));
 
-        PlaneToVec(X1, Y, X, X1_T);
+        PlaneToVec(X1, image_height, image_width, X1_T);
 
         for (int i = 0; i < MB; ++i) {
             for (int j = 0; j < NB; ++j) {
@@ -1547,42 +1712,34 @@ int main() {
         }
     }
 
-    std::vector<int> indices(Cap);
-
-    sortRowsEmulation(Diff_vector, indices);
+    vector<int> indices(Cap);
+    SortRowsEmulation(Diff_vector, indices);
 
     std::fill(Diff_vector.begin(), Diff_vector.end(), 0);
-
     for (size_t i = 0; i < MessageLength; ++i) {
         Diff_vector[indices[i]] = 1.0; // Set the first 'MessageLength' indices to 1.0
     }
 
-    auto D2n = embedMessage(Qm1, Qm2, E, D1, Diff_vector, Message, D2raw, nonzero_spec, MB, NB);
-
-    vector<vector<double>> resultPlane;
+    EmbedMessage(Qm1, Qm2, E, D1, Diff_vector, Message, D2raw, D2n, nonzero_spec, MB, NB);
     VecToPlane(resultPlane, MB, NB, D2n);
+    SavePerturbedJPEG(resultPlane);
 
-    // Save perturbed coefficients
-    save_perturbed_jpeg(resultPlane);
-
-    cout << "\n ---- Perturbed jpeg image saved successfully! ----" << endl;
-
-    /* CHECK STORED COEFFICIENTS BY RELOADING STORED JPEG */
-
-    auto filenameLast = "/home/mato/CLionProjects/StegoDisk/output.jpg";
+    //-------------------------------
+    /* CHECK STORED JPEG */
+    //-------------------------------
 
     FILE *infileLast;
+    jpeg_decompress_struct cinfoLast{};
+    auto dct_coefficientsLast = vector<vector<double>>();
+
+    auto filenameLast = "/home/mato/CLionProjects/StegoDisk/output.jpg";
     if ((infileLast = fopen(filenameLast, "rb")) == nullptr) {
         fprintf(stderr, "Can't open %s\n", filenameLast);
         return -1;
     }
 
-    jpeg_decompress_struct cinfoLast{};
-    auto dct_coefficientsLast = vector<vector<double>>();
-
-    read_jpeg_info(infileLast, cinfoLast, dct_coefficientsLast);
-
-    writeVectorToFile(dct_coefficientsLast, "/home/mato/Desktop/result_plane.txt");
+    ReadJPEGInfo(infileLast, cinfoLast, dct_coefficientsLast);
+    WriteVectorToFile(dct_coefficientsLast, "/home/mato/Desktop/result_plane.txt");
 
     return 0;
 }
